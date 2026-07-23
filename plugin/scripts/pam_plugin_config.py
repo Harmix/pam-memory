@@ -31,12 +31,26 @@ class PluginConfig:
     settings: PluginSettings
 
 
+PLUGIN_ID = "pam-memory@pam-memory"
+CC_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+
+
+def _read_cc_plugin_config() -> dict:
+    """Read values CC stores when user runs /plugin configure."""
+    data = _load_json(CC_SETTINGS_PATH)
+    return (
+        data.get("pluginConfigs", {})
+        .get(PLUGIN_ID, {})
+        .get("options", {})
+    )
+
+
 def resolve_api_key() -> str:
     for env_name in (ENV_PLUGIN_API_KEY, ENV_DEV_API_KEY):
         value = os.environ.get(env_name, "").strip()
         if value:
             return value
-    return ""
+    return _read_cc_plugin_config().get("api_key", "").strip()
 
 
 def resolve_base_url() -> str:
@@ -44,7 +58,8 @@ def resolve_base_url() -> str:
         value = os.environ.get(env_name, "").strip()
         if value:
             return value
-    return DEFAULT_BASE_URL
+    cc_url = _read_cc_plugin_config().get("base_url", "").strip()
+    return cc_url or DEFAULT_BASE_URL
 
 
 def _load_json(path: Path) -> dict:

@@ -22,10 +22,13 @@ Or in **Settings → Plugins → Add marketplace**, enter `Harmix/pam-memory`, t
 
 ## Configure
 
-In Claude Code plugin settings:
+Run in Claude Code:
 
-1. **API key** — paste your full `pam_mkey_<key>` from For Developers
-2. **Base URL** (optional) — defaults to `https://api.pam.harmix.ai`
+```text
+/plugin configure pam-memory@pam-memory
+```
+
+Enter your `pam_mkey_*` key when prompted. Optionally set a custom base URL (defaults to `https://api.pam.harmix.ai`).
 
 Optional tunables: `~/.pam/settings.json`
 

@@ -1,6 +1,6 @@
 {
   "name": "pam-memory",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Retrieve PAM company memory for Claude Code.",
   "author": {
     "name": "Harmix",
@@ -12,7 +12,6 @@
       "type": "string",
       "title": "PAM Memory API Key",
       "description": "Your PAM developer memory key (pam_mkey_*).",
-      "sensitive": true,
       "required": true
     },
     "base_url": {

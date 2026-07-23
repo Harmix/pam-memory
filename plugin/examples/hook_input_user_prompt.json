@@ -1,0 +1,5 @@
+{
+  "prompt": "What decisions did we make about the dashboard migration?",
+  "session_id": "claude-session-abc123",
+  "cwd": "/path/to/your/project"
+}

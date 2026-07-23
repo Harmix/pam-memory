@@ -1,6 +1,6 @@
 {
   "name": "pam-memory",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Retrieve PAM company memory for Claude Code.",
   "author": {
     "name": "Harmix",

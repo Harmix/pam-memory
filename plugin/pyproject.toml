@@ -1,0 +1,18 @@
+[project]
+name = "pam-memory-plugin"
+version = "0.1.0"
+description = "Claude Code plugin for PAM company memory retrieval"
+requires-python = ">=3.10"
+dependencies = [
+  "pam-sdk",
+]
+
+[tool.uv.sources]
+pam-sdk = { path = "../pam-python-sdk", editable = true }
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["scripts"]

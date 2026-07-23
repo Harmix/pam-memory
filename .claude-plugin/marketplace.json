@@ -1,0 +1,18 @@
+{
+  "name": "pam-memory",
+  "owner": {
+    "name": "Harmix",
+    "email": "support@harmix.ai"
+  },
+  "metadata": {
+    "description": "PAM company memory for Claude"
+  },
+  "plugins": [
+    {
+      "name": "pam-memory",
+      "description": "Retrieve PAM company memory for Claude Code.",
+      "version": "0.1.0",
+      "source": "./plugin"
+    }
+  ]
+}

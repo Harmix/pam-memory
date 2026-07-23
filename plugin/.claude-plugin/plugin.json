@@ -1,0 +1,25 @@
+{
+  "name": "pam-memory",
+  "version": "0.1.0",
+  "description": "Retrieve PAM company memory for Claude Code.",
+  "author": {
+    "name": "Harmix",
+    "email": "support@harmix.ai"
+  },
+  "keywords": ["memory", "pam", "company-context"],
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "PAM Memory API Key",
+      "description": "Your PAM developer memory key (pam_mkey_*).",
+      "sensitive": true,
+      "required": true
+    },
+    "base_url": {
+      "type": "string",
+      "title": "PAM Agent API URL",
+      "description": "Optional. Defaults to https://api.pam.harmix.ai",
+      "required": false
+    }
+  }
+}

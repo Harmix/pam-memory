@@ -20,7 +20,7 @@
             "name": "pam-memory-user-prompt",
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/run_hook.sh\" --event user_prompt",
-            "timeout": 8
+            "timeout": 45
           }
         ]
       }

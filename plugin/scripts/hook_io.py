@@ -18,9 +18,10 @@ def read_hook_input() -> dict[str, Any]:
         return {}
 
 
-def emit_additional_context(context: str) -> None:
+def emit_additional_context(context: str, hook_event_name: str = "UserPromptSubmit") -> None:
     payload = {
         "hookSpecificOutput": {
+            "hookEventName": hook_event_name,
             "additionalContext": context,
         }
     }

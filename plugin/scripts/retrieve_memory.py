@@ -15,8 +15,11 @@ def handle_session_start() -> None:
     if config.api_key:
         exit_ok()
     emit_additional_context(
-        "PAM memory: add your `pam_mkey_*` key in Claude plugin settings "
-        "(PAM Memory → API Key)."
+        "PAM memory: API key not found. Configure it with:\n"
+        "  /plugin configure pam-memory@pam-memory\n"
+        "Or add to ~/.claude/settings.json:\n"
+        '  "env": { "PAM_API_KEY": "pam_mkey_<your-key>" }',
+        hook_event_name="SessionStart",
     )
     exit_ok()
 

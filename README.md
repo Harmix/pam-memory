@@ -45,11 +45,15 @@ Then install:
 
 ### Configure
 
-Open **Plugins → pam-memory → Settings**:
+Run in Claude Code:
+
+```text
+/plugin configure pam-memory@pam-memory
+```
 
 | Setting | Value |
-|---------|--------|
-| **PAM Memory API Key** | Your full `pam_mkey_<key>` |
+|---------|-------|
+| **PAM Memory API Key** | Your full `pam_mkey_<key>` from PAM → For Developers |
 | **PAM Agent API URL** | Optional. Default: `https://api.pam.harmix.ai` |
 
 ### Verify
@@ -112,12 +116,12 @@ Default base URL: `https://api.pam.harmix.ai`
 
 | Symptom | Likely cause | What to do |
 |---------|--------------|------------|
-| No company context in replies | Missing/invalid key, prompt under 10 chars, or memory not synced | Paste full `pam_mkey_*`, ask a longer question, confirm sources are synced in PAM |
-| Claude works with no errors and no memory | Expected fail-open behavior | Check plugin settings key; try SDK smoke test to isolate API vs plugin |
+| No company context in replies | Missing/invalid key, prompt under 10 chars, or memory not synced | Re-run `/plugin configure pam-memory@pam-memory`; ask a longer question; confirm sources are synced in PAM |
+| Claude works with no errors and no memory | Key not configured | Run `/plugin configure pam-memory@pam-memory` and enter your key |
 | Marketplace sync fails | Repo private, wrong URL, or missing marketplace file | Use `Harmix/pam-memory`; repo must be public with `.claude-plugin/marketplace.json` |
 | Hook / bash errors on Windows | No bash on PATH | Install Git Bash or use WSL |
 | `quota_exceeded` / empty retrieve | Plan limit or memory not ready | Check **For Developers** usage; wait for initial sync to finish |
-| Works in SDK, not in Claude | Wrong base URL or key only set in shell env | Set key in **plugin settings** (`CLAUDE_PLUGIN_OPTION_API_KEY`), not only `PAM_API_KEY` |
+| Works in SDK, not in Claude | Key not configured for plugin | Run `/plugin configure pam-memory@pam-memory` and enter your `pam_mkey_*` key |
 
 ---
 

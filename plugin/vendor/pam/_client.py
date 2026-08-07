@@ -19,7 +19,7 @@ from pam._constants import (
 )
 from pam.exceptions import PAMAPIError, PAMAuthError, PAMTimeoutError
 from pam.resources.memory import MemoryResource
-from pam.types.memory import RetrieveMemoryResponse
+from pam.types.memory import IngestMemoryItem, IngestMemoryResponse, RetrieveMemoryResponse
 
 
 class _HTTPClient:
@@ -75,7 +75,7 @@ class _HTTPClient:
 
 
 class PAMClient:
-    """Sync PAM SDK client — v1 exposes memory.retrieve only."""
+    """Sync PAM SDK client — exposes memory.retrieve and memory.ingest."""
 
     def __init__(
         self,
@@ -131,3 +131,7 @@ class PAMClient:
     ) -> RetrieveMemoryResponse:
         """Shortcut for client.memory.retrieve(...)."""
         return self.memory.retrieve(prompt=prompt, session_id=session_id)
+
+    def ingest(self, *, item: IngestMemoryItem) -> IngestMemoryResponse:
+        """Shortcut for client.memory.ingest(...)."""
+        return self.memory.ingest(item=item)

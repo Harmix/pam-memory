@@ -67,6 +67,18 @@ If nothing company-specific appears, see [Troubleshooting](#troubleshooting). Cl
 
 See [`plugin/README.md`](./plugin/README.md) for hook details and local testing.
 
+### Sync Claude chat history
+
+Run `/sync-claude-memory` to summarize your local Claude Code and Claude
+Desktop Cowork session transcripts into memory items and send them to PAM
+(plain Chat has no local transcript and isn't covered). It discloses which
+local files it reads and asks for confirmation first; if sending to PAM
+fails for any reason, items are queued locally instead
+(`~/.pam/sync_queue/claude_code.jsonl`) rather than lost. See
+[`docs/sync-claude-memory-implementation-plan.md`](./docs/sync-claude-memory-implementation-plan.md)
+for the full cross-repo (pam-memory / pam-agent-api / pam-jobs / pam-backend-api)
+implementation and testing plan.
+
 ---
 
 ## Python SDK

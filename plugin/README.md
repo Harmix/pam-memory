@@ -44,6 +44,27 @@ Optional tunables: `~/.pam/settings.json`
 
 Start a Claude Code session with the plugin enabled and ask a question of at least 10 characters about your company knowledge. On success, relevant memory is injected silently before the model responds.
 
+## Sync your Claude chat history
+
+`/sync-claude-memory` reads your local session transcripts — both the
+Claude Code CLI (`~/.claude/projects/**/*.jsonl`) and Claude Desktop's
+Cowork mode (same jsonl format; Desktop's own session index is used to tag
+which sessions came from Cowork and to reuse its titles) — and summarizes
+each session into a structured memory item, then sends it to PAM using your
+configured `pam_mkey_*` key. Plain Claude Desktop Chat (non-Cowork) has no
+local transcript and is out of scope.
+
+It always discloses what it's about to read and asks for confirmation before
+reading any transcript content — see `skills/sync-claude-memory/SKILL.md`.
+
+If sending to PAM fails for any reason (missing key, network error, backend
+rejects it), the item is queued locally instead at
+`~/.pam/sync_queue/claude_code.jsonl` rather than lost — you'll get an
+accurate report of what was actually sent vs staged locally, never a false
+"success." See
+[`docs/sync-claude-memory-implementation-plan.md`](../docs/sync-claude-memory-implementation-plan.md)
+for the full cross-repo design (pam-memory, pam-agent-api, pam-jobs, pam-backend-api).
+
 ## Local hook test
 
 From this directory:

@@ -1,5 +1,6 @@
 DEFAULT_BASE_URL = "https://api.pam.harmix.ai"
 RETRIEVE_PATH = "/v1/memory/retrieve"
+INGEST_PATH = "/v1/memory/ingest"
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0

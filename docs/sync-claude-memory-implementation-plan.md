@@ -1,8 +1,12 @@
 # sync-claude-memory: cross-repo implementation & testing plan
 
 Tracking: PAM-1282. Branch `feat/pam-1282/claude-code-ingest` cut from
-`develop` in all four repos (pam-memory, pam-agent-api, pam-jobs,
-pam-backend-api).
+`develop` in all four repos, open against `develop` as:
+
+- pam-memory: https://github.com/Harmix/pam-memory/pull/5
+- pam-agent-api: https://github.com/Harmix/pam-agent-api/pull/369
+- pam-jobs: https://github.com/Harmix/pam-jobs/pull/202
+- pam-backend-api: https://github.com/Harmix/pam-backend-api/pull/486
 
 Turns local Claude Code / Cowork session history into PAM memory. Three repos,
 one feature. This plan is the result of reading each repo directly (not

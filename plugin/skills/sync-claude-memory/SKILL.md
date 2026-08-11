@@ -43,6 +43,11 @@ Run, forwarding `$ARGUMENTS` as flags if present:
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/list_claude_sessions.py" $ARGUMENTS
 ```
 
+This step, and every script in this skill, only needs a plain `python3` —
+no pip install or venv bootstrap. Sending data to PAM (step 3) shells out to
+`curl` rather than a Python HTTP library, so there's no third-party
+dependency to install on the user's machine.
+
 This only reads session metadata (session id, project cwd, timestamps, message
 count, and a short snippet of the first user message used as a title) — it
 does not extract full transcript content. It also checks Claude Desktop's own

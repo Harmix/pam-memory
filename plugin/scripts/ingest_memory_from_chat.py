@@ -1,34 +1,33 @@
 #!/usr/bin/env python3
 """Push one extracted memory item to PAM, with a local-queue fallback.
 
-Tries PAMClient.memory.ingest(...) first. If the API key isn't configured,
-the SDK isn't importable, or the network call fails or comes back as a
-business error, falls back to queuing locally at
-~/.pam/sync_queue/claude_code.jsonl (validates, dedupes by session_id) so no
-extracted memory item is silently lost. The caller can tell which path was
-taken from the returned "status": "queued" (sent to PAM) vs
-"queued_locally" (fallback).
+POSTs to PAM's REST API via curl first (no Python HTTP library needed --
+just python3 + curl). If the API key isn't configured, curl isn't on PATH,
+or the network call fails or comes back as a business error, falls back to
+queuing locally at ~/.pam/sync_queue/claude_code.jsonl (validates, dedupes
+by session_id) so no extracted memory item is silently lost. The caller can
+tell which path was taken from the returned "status": "queued" (sent to
+PAM) vs "queued_locally" (fallback).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "vendor"))
-
-try:
-    from pam import IngestMemoryItem, PAMClient
-except ImportError:
-    IngestMemoryItem = None  # type: ignore[assignment,misc]
-    PAMClient = None  # type: ignore[assignment,misc]
-
 import pam_plugin_config
+
+INGEST_PATH = "/v1/memory/ingest"
+REQUEST_TIMEOUT_SECONDS = 90
+CONNECT_TIMEOUT_SECONDS = 5
 
 QUEUE_DIR = Path.home() / ".pam" / "sync_queue"
 QUEUE_FILE = QUEUE_DIR / "claude_code.jsonl"
@@ -108,27 +107,103 @@ def _queue_locally(
     }
 
 
-def _send_to_pam(item: dict[str, Any]) -> dict[str, Any]:
-    """Try the real ingest call. Returns a result dict on success, raises on failure."""
-    if PAMClient is None or IngestMemoryItem is None:
-        raise RuntimeError("pam SDK unavailable")
+def _build_ingest_body(item: dict[str, Any]) -> dict[str, Any]:
+    """Mirror IngestMemoryItem.model_dump(exclude_none=True) without pydantic."""
+    body: dict[str, Any] = {}
+    for field in ITEM_FIELDS:
+        value = item.get(field)
+        if value is None:
+            continue
+        if field == "turns":
+            value = [
+                {k: v for k, v in turn.items() if v is not None} for turn in value
+            ]
+        body[field] = value
+    return body
 
+
+def _send_to_pam(item: dict[str, Any]) -> dict[str, Any]:
+    """POST the item to PAM's REST API via curl. Returns a result dict on
+    success, raises on failure.
+
+    Shells out to curl instead of depending on an HTTP library (httpx) so
+    this never needs a pip install / venv bootstrap -- only a plain python3
+    and curl, both of which are safe to assume on a dev machine.
+    """
     api_key = pam_plugin_config.resolve_api_key()
     if not api_key:
         raise RuntimeError("no PAM API key configured")
-    base_url = pam_plugin_config.resolve_base_url()
+    base_url = pam_plugin_config.resolve_base_url().rstrip("/")
+    url = f"{base_url}{INGEST_PATH}"
 
-    ingest_item = IngestMemoryItem(**{k: item[k] for k in ITEM_FIELDS if k in item})
-    client = PAMClient.for_plugin(api_key=api_key, base_url=base_url)
-    response = client.memory.ingest(item=ingest_item)
+    payload = json.dumps(_build_ingest_body(item)).encode("utf-8")
 
-    if not response.ok:
+    # Header goes in a curl config file (not argv/env visible to `ps`) so the
+    # API key never shows up in the process list.
+    fd, cfg_path = tempfile.mkstemp(prefix="pam-curl-", suffix=".cfg")
+    try:
+        os.chmod(cfg_path, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as cfg:
+            cfg.write(f'header = "Authorization: Bearer {api_key}"\n')
+            cfg.write('header = "Content-Type: application/json"\n')
+
+        try:
+            result = subprocess.run(
+                [
+                    "curl",
+                    "-sS",
+                    "-K",
+                    cfg_path,
+                    "--max-time",
+                    str(REQUEST_TIMEOUT_SECONDS),
+                    "--connect-timeout",
+                    str(CONNECT_TIMEOUT_SECONDS),
+                    "-w",
+                    "\n%{http_code}",
+                    "--data-binary",
+                    "@-",
+                    url,
+                ],
+                input=payload,
+                capture_output=True,
+                timeout=REQUEST_TIMEOUT_SECONDS + 5,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("curl not found on PATH") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("PAM memory ingest timed out") from exc
+    finally:
+        os.unlink(cfg_path)
+
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"curl failed (exit {result.returncode}): {stderr[:200]}")
+
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    response_body, _, status_code_str = stdout.rpartition("\n")
+    status_code = int(status_code_str) if status_code_str.isdigit() else 0
+
+    if status_code == 401:
+        raise RuntimeError("Invalid or missing PAM API key")
+    if status_code >= 400:
+        raise RuntimeError(f"PAM request failed: {status_code} {response_body[:200]}")
+
+    try:
+        data = json.loads(response_body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"invalid JSON from PAM server: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise RuntimeError("expected JSON object from PAM server")
+
+    item_id = data.get("item_id")
+    if data.get("status") != "ok" or not item_id:
         raise RuntimeError(
-            f"ingest rejected: {response.error_code or 'unknown'} "
-            f"{response.error_message or ''}".strip()
+            f"ingest rejected: {data.get('error_code') or 'unknown'} "
+            f"{data.get('error_message') or ''}".strip()
         )
 
-    return {"status": "queued", "item_id": response.item_id}
+    return {"status": "queued", "item_id": item_id}
 
 
 def ingest_memory_from_chat(

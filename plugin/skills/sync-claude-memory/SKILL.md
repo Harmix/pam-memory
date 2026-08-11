@@ -97,17 +97,25 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/extract_raw_transcript.py" --file <path> 
 using the `"file"` and `"client"` values from that session's entry in step
 1's `sessions` list. This is a single Python process per session with zero
 model calls — do not spawn an `Agent` for this, and do not read transcript
-content yourself. Batch the calls into one Bash invocation (a shell `for`
-loop over the confirmed sessions) rather than one tool call per session, to
-keep round-trips down for large scopes:
+content yourself. Batch the calls into one Bash invocation (a shell loop
+over the confirmed sessions) rather than one tool call per session, to keep
+round-trips down for large scopes.
+
+The user's default shell may be bash or zsh (check the environment info you
+were given). Bash-only array syntax (`declare -a`, `"${!FILES[@]}"`) is
+**not** portable to zsh — under zsh it fails silently (arrays end up empty,
+the loop body never runs, and `wc -l` reports 0) rather than erroring, which
+looks like success while actually syncing nothing. Use a heredoc fed into a
+`while read` loop instead — this works identically in bash and zsh:
 
 ```bash
-declare -a FILES=(<file1> <file2> ...)
-declare -a CLIENTS=(<client1> <client2> ...)
-for i in "${!FILES[@]}"; do
+while IFS='|' read -r f c; do
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/extract_raw_transcript.py" \
-    --file "${FILES[$i]}" --client "${CLIENTS[$i]}"
-done
+    --file "$f" --client "$c"
+done <<'EOF'
+<file1>|<client1>
+<file2>|<client2>
+EOF
 ```
 
 Each line of output is one JSON object:

@@ -2,7 +2,7 @@
 name: sync-claude-memory
 description: Reads the user's local Claude Code and Claude Desktop Cowork session transcripts, mechanically parses and redacts each into raw turns, and sends them to PAM for server-side extraction. Always discloses which local files it will read and asks for explicit confirmation before reading any transcript content. Triggers on "/sync-claude-memory", "sync my claude memory into pam", "import my claude chat history".
 argument-hint: [--since YYYY-MM-DD] [--project <name>]
-allowed-tools: Bash, AskUserQuestion, Monitor
+allowed-tools: Bash, AskUserQuestion
 ---
 
 # sync-claude-memory
@@ -86,12 +86,13 @@ by — date or project — and re-run step 1), or cancel. If the user cancels,
 stop here. Do not read any transcript file content beyond what step 1 already
 read.
 
-## 3. Parse and push — mechanical, no subagents, with live progress
+## 3. Parse and push — mechanical, no subagents, exactly one run
 
 Only after confirmation. Write the confirmed sessions to a scratch JSON file
 as an array of `{"file": ..., "client": ...}` objects, taken directly from
 step 1's `sessions` list (e.g. to a path under the session's scratchpad
-directory), then run the whole batch as **one** process:
+directory), then run the whole batch as **one** process, invoked **exactly
+once**:
 
 ```
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sync_batch.py" --sessions-file <scratch-file>.json
@@ -114,26 +115,35 @@ logic itself (the identical per-session work completes in ~1s when invoked
 directly). `sync_batch.py` exists so the call site is always a single simple
 command, which does not hit this.
 
-For scopes worth showing live progress on (roughly more than 10-15
-sessions), invoke it with the `Monitor` tool directly rather than plain
-Bash — `Monitor`'s `command` starts the process itself and turns each
-stdout line into a notification, so you can relay per-session progress to
-the user as it happens instead of going silent for minutes:
+**Do not use the `Monitor` tool for this.** It was tried for live per-session
+progress on a 118-session batch and the harness auto-killed the monitor (and
+the `sync_batch.py` process it started) partway through for emitting "too
+much output" — one notification per session line is too high a rate. The
+run had to be resumed as a second, separate `sync_batch.py` invocation for
+the remaining sessions, meaning the batch reached PAM as two independent
+pushes instead of one. Each session only gets ingested correctly once, but
+two separate runs is still worth avoiding — it's needless surface for
+conflicting or duplicated in-flight ingest/pam-jobs work, and it makes the
+final tally harder to reason about (two summary lines instead of one).
 
-```
-Monitor(
-  command: python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sync_batch.py" --sessions-file <scratch-file>.json,
-  description: "sync-claude-memory: pushing <N> sessions to PAM",
-  timeout_ms: <a few minutes per ~50 sessions, capped at 3600000>,
-  persistent: false
-)
-```
+Instead, run it as a single **foreground** Bash call, sized so the batch
+finishes inside one invocation:
 
-Relay progress in your own words as notifications arrive (e.g. "34 of 117
-sessions pushed so far, 2 fell back to the local queue") rather than
-printing raw JSON at the user. For small scopes, plain foreground Bash
-(no `Monitor`) is simpler and fine — parse the JSON lines directly from its
-output.
+- The script processes roughly 1 session/second, so even a few hundred
+  sessions finish in a few minutes — set the Bash `timeout` generously
+  (e.g. `session_count * 2` seconds, capped at the tool's 600000ms/10min
+  max) rather than the default 2-minute timeout.
+- Do not stream or relay per-session progress to the user while it runs —
+  there is no live-progress mechanism here anymore. Let it run quietly to
+  completion, then parse all the JSON lines from stdout at once (the
+  per-session lines plus the trailing `{"status": "summary", ...}` line) and
+  report the final tally per step 4. It's fine to tell the user up front
+  that this may take a minute or two for large scopes, so they're not
+  surprised by the silence.
+- If the batch is large enough that it plausibly needs more than 10 minutes,
+  run it with `run_in_background: true` instead and wait for the single
+  completion notification (not per-line) before reading the output — do not
+  poll or re-invoke the script while it's still running.
 
 Each per-session line is one JSON object:
 

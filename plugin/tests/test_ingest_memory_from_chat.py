@@ -25,7 +25,7 @@ class TestLocalFallback:
     def test_queues_valid_item(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _force_no_api_key(monkeypatch)
         queue_file = tmp_path / "claude_code.jsonl"
-        item = {"session_id": "s1", "summary": "Discussed deploy process."}
+        item = {"session_id": "s1", "turns": [{"role": "user", "text": "Discussed deploy process."}]}
 
         result = ingest(item, queue_file=queue_file)
 
@@ -43,24 +43,34 @@ class TestLocalFallback:
     def test_dedupes_by_session_id(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _force_no_api_key(monkeypatch)
         queue_file = tmp_path / "claude_code.jsonl"
-        ingest({"session_id": "s1", "summary": "First pass."}, queue_file=queue_file)
+        ingest(
+            {"session_id": "s1", "turns": [{"role": "user", "text": "First pass."}]},
+            queue_file=queue_file,
+        )
         result = ingest(
-            {"session_id": "s1", "summary": "Updated summary."}, queue_file=queue_file
+            {"session_id": "s1", "turns": [{"role": "user", "text": "Updated pass."}]},
+            queue_file=queue_file,
         )
 
         assert result["status"] == "queued_locally"
         assert result["queue_count"] == 1
         lines = queue_file.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 1
-        assert json.loads(lines[0])["summary"] == "Updated summary."
+        assert json.loads(lines[0])["turns"][0]["text"] == "Updated pass."
 
     def test_appends_distinct_sessions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _force_no_api_key(monkeypatch)
         queue_file = tmp_path / "claude_code.jsonl"
-        ingest({"session_id": "s1", "summary": "A"}, queue_file=queue_file)
-        result = ingest({"session_id": "s2", "summary": "B"}, queue_file=queue_file)
+        ingest(
+            {"session_id": "s1", "turns": [{"role": "user", "text": "A"}]},
+            queue_file=queue_file,
+        )
+        result = ingest(
+            {"session_id": "s2", "turns": [{"role": "user", "text": "B"}]},
+            queue_file=queue_file,
+        )
 
         assert result["status"] == "queued_locally"
         assert result["queue_count"] == 2
@@ -99,7 +109,7 @@ class TestRealIngest:
 
         queue_file = tmp_path / "claude_code.jsonl"
         result = ingest(
-            {"session_id": "s1", "summary": "Discussed deploy process."},
+            {"session_id": "s1", "turns": [{"role": "user", "text": "Discussed deploy process."}]},
             queue_file=queue_file,
         )
 
@@ -127,7 +137,10 @@ class TestRealIngest:
         )
 
         queue_file = tmp_path / "claude_code.jsonl"
-        result = ingest({"session_id": "s1", "summary": "X"}, queue_file=queue_file)
+        result = ingest(
+            {"session_id": "s1", "turns": [{"role": "user", "text": "X"}]},
+            queue_file=queue_file,
+        )
 
         assert result["status"] == "queued_locally"
         assert "quota_exceeded" in result["reason"]
@@ -151,7 +164,10 @@ class TestRealIngest:
         )
 
         queue_file = tmp_path / "claude_code.jsonl"
-        result = ingest({"session_id": "s1", "summary": "X"}, queue_file=queue_file)
+        result = ingest(
+            {"session_id": "s1", "turns": [{"role": "user", "text": "X"}]},
+            queue_file=queue_file,
+        )
 
         assert result["status"] == "queued_locally"
         assert "connection reset" in result["reason"]
@@ -164,7 +180,10 @@ class TestRealIngest:
         _force_no_api_key(monkeypatch)
         queue_file = tmp_path / "claude_code.jsonl"
 
-        result = ingest({"session_id": "s1", "summary": "X"}, queue_file=queue_file)
+        result = ingest(
+            {"session_id": "s1", "turns": [{"role": "user", "text": "X"}]},
+            queue_file=queue_file,
+        )
 
         assert result["status"] == "queued_locally"
         assert result["reason"] == "no PAM API key configured"

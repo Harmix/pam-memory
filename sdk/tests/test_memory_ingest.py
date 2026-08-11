@@ -9,6 +9,8 @@ import respx
 from pam import IngestMemoryItem, PAMClient
 from pam.exceptions import PAMAPIError, PAMAuthError
 
+_TURNS = [{"role": "user", "text": "Discussed deploy process."}]
+
 
 @respx.mock
 def test_ingest_success() -> None:
@@ -21,7 +23,7 @@ def test_ingest_success() -> None:
 
     client = PAMClient(api_key="pam_mkey_test.secret")
     result = client.memory.ingest(
-        item=IngestMemoryItem(session_id="s1", summary="Discussed deploy process.")
+        item=IngestMemoryItem(session_id="s1", turns=_TURNS)
     )
 
     assert result.ok
@@ -42,7 +44,7 @@ def test_ingest_business_error() -> None:
     )
 
     client = PAMClient(api_key="pam_mkey_test.secret")
-    result = client.memory.ingest(item=IngestMemoryItem(session_id="s1", summary="X"))
+    result = client.memory.ingest(item=IngestMemoryItem(session_id="s1", turns=_TURNS))
 
     assert not result.ok
     assert result.error_code == "quota_exceeded"
@@ -56,7 +58,7 @@ def test_ingest_auth_raises() -> None:
 
     client = PAMClient(api_key="bad-key")
     with pytest.raises(PAMAuthError):
-        client.memory.ingest(item=IngestMemoryItem(session_id="s1", summary="X"))
+        client.memory.ingest(item=IngestMemoryItem(session_id="s1", turns=_TURNS))
 
 
 @respx.mock
@@ -67,7 +69,7 @@ def test_ingest_server_error_raises_api_error() -> None:
 
     client = PAMClient(api_key="pam_mkey_test.secret")
     with pytest.raises(PAMAPIError):
-        client.memory.ingest(item=IngestMemoryItem(session_id="s1", summary="X"))
+        client.memory.ingest(item=IngestMemoryItem(session_id="s1", turns=_TURNS))
 
 
 @respx.mock
@@ -77,7 +79,7 @@ def test_client_ingest_shortcut() -> None:
     )
 
     client = PAMClient(api_key="pam_mkey_test.secret")
-    result = client.ingest(item=IngestMemoryItem(session_id="s1", summary="X"))
+    result = client.ingest(item=IngestMemoryItem(session_id="s1", turns=_TURNS))
 
     assert result.ok
     assert result.item_id == "item-456"
@@ -85,9 +87,18 @@ def test_client_ingest_shortcut() -> None:
 
 def test_ingest_item_rejects_unknown_fields() -> None:
     with pytest.raises(Exception):
-        IngestMemoryItem(session_id="s1", summary="X", unexpected_field="nope")
+        IngestMemoryItem(session_id="s1", turns=_TURNS, unexpected_field="nope")
 
 
-def test_ingest_item_requires_session_id_and_summary() -> None:
+def test_ingest_item_requires_session_id_and_turns() -> None:
     with pytest.raises(Exception):
-        IngestMemoryItem(summary="X")
+        IngestMemoryItem(turns=_TURNS)
+    with pytest.raises(Exception):
+        IngestMemoryItem(session_id="s1")
+
+
+def test_ingest_turn_rejects_unknown_role() -> None:
+    with pytest.raises(Exception):
+        IngestMemoryItem(
+            session_id="s1", turns=[{"role": "system", "text": "nope"}]
+        )

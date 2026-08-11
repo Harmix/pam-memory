@@ -49,9 +49,13 @@ Start a Claude Code session with the plugin enabled and ask a question of at lea
 `/sync-claude-memory` reads your local session transcripts — both the
 Claude Code CLI (`~/.claude/projects/**/*.jsonl`) and Claude Desktop's
 Cowork mode (same jsonl format; Desktop's own session index is used to tag
-which sessions came from Cowork and to reuse its titles) — and summarizes
-each session into a structured memory item, then sends it to PAM using your
-configured `pam_mkey_*` key. Plain Claude Desktop Chat (non-Cowork) has no
+which sessions came from Cowork and to reuse its titles) — and mechanically
+parses each session into raw text turns (tool calls, tool output, and images
+dropped; secrets/tokens redacted by pattern matching), then sends the raw
+turns to PAM using your configured `pam_mkey_*` key. No summarization or
+"is this worth keeping" judgment happens on your machine or spends your own
+model quota — PAM extracts facts server-side, the same way it processes
+every other memory source. Plain Claude Desktop Chat (non-Cowork) has no
 local transcript and is out of scope.
 
 It always discloses what it's about to read and asks for confirmation before

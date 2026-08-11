@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +17,25 @@ def _force_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         ingest_memory_from_chat.pam_plugin_config, "resolve_api_key", lambda: ""
     )
+
+
+def _mock_curl(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    returncode: int = 0,
+    body: str = "",
+    status_code: int | None = 200,
+    stderr: bytes = b"",
+) -> None:
+    """Stand in for the curl subprocess ingest_memory_from_chat shells out to."""
+    stdout = body.encode("utf-8")
+    if status_code is not None:
+        stdout += f"\n{status_code}".encode("utf-8")
+
+    def fake_run(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+    monkeypatch.setattr(ingest_memory_from_chat.subprocess, "run", fake_run)
 
 
 class TestLocalFallback:
@@ -86,9 +105,9 @@ class TestValidation:
 
 
 class TestRealIngest:
-    def test_success_sends_to_pam(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    """Exercise _send_to_pam's curl subprocess call, mocked at the subprocess.run boundary."""
+
+    def _set_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
             ingest_memory_from_chat.pam_plugin_config,
             "resolve_api_key",
@@ -100,11 +119,14 @@ class TestRealIngest:
             lambda: "https://api.pam.harmix.ai",
         )
 
-        mock_response = MagicMock(ok=True, item_id="item-123")
-        mock_client = MagicMock()
-        mock_client.memory.ingest.return_value = mock_response
-        monkeypatch.setattr(
-            ingest_memory_from_chat.PAMClient, "for_plugin", lambda **_: mock_client
+    def test_success_sends_to_pam(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._set_key(monkeypatch)
+        _mock_curl(
+            monkeypatch,
+            body=json.dumps({"status": "ok", "item_id": "item-123"}),
+            status_code=200,
         )
 
         queue_file = tmp_path / "claude_code.jsonl"
@@ -115,25 +137,17 @@ class TestRealIngest:
 
         assert result == {"status": "queued", "item_id": "item-123"}
         assert not queue_file.exists()
-        mock_client.memory.ingest.assert_called_once()
 
     def test_business_error_falls_back_locally(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            ingest_memory_from_chat.pam_plugin_config,
-            "resolve_api_key",
-            lambda: "pam_mkey_test.secret",
-        )
-        monkeypatch.setattr(
-            ingest_memory_from_chat.pam_plugin_config, "resolve_base_url", lambda: "https://x"
-        )
-
-        mock_response = MagicMock(ok=False, error_code="quota_exceeded", error_message="limit")
-        mock_client = MagicMock()
-        mock_client.memory.ingest.return_value = mock_response
-        monkeypatch.setattr(
-            ingest_memory_from_chat.PAMClient, "for_plugin", lambda **_: mock_client
+        self._set_key(monkeypatch)
+        _mock_curl(
+            monkeypatch,
+            body=json.dumps(
+                {"status": "error", "error_code": "quota_exceeded", "error_message": "limit"}
+            ),
+            status_code=200,
         )
 
         queue_file = tmp_path / "claude_code.jsonl"
@@ -148,19 +162,13 @@ class TestRealIngest:
     def test_network_error_falls_back_locally(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            ingest_memory_from_chat.pam_plugin_config,
-            "resolve_api_key",
-            lambda: "pam_mkey_test.secret",
-        )
-        monkeypatch.setattr(
-            ingest_memory_from_chat.pam_plugin_config, "resolve_base_url", lambda: "https://x"
-        )
-
-        mock_client = MagicMock()
-        mock_client.memory.ingest.side_effect = RuntimeError("connection reset")
-        monkeypatch.setattr(
-            ingest_memory_from_chat.PAMClient, "for_plugin", lambda **_: mock_client
+        self._set_key(monkeypatch)
+        _mock_curl(
+            monkeypatch,
+            returncode=7,
+            body="",
+            status_code=None,
+            stderr=b"curl: (7) Failed to connect: connection reset by peer",
         )
 
         queue_file = tmp_path / "claude_code.jsonl"
@@ -173,6 +181,21 @@ class TestRealIngest:
         assert "connection reset" in result["reason"]
         lines = queue_file.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 1
+
+    def test_invalid_api_key_falls_back_locally(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._set_key(monkeypatch)
+        _mock_curl(monkeypatch, body="", status_code=401)
+
+        queue_file = tmp_path / "claude_code.jsonl"
+        result = ingest(
+            {"session_id": "s1", "turns": [{"role": "user", "text": "X"}]},
+            queue_file=queue_file,
+        )
+
+        assert result["status"] == "queued_locally"
+        assert "Invalid or missing PAM API key" in result["reason"]
 
     def test_missing_api_key_falls_back_locally(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

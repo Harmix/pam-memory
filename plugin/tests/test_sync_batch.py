@@ -78,6 +78,94 @@ class TestRunBatch:
         assert lines[1]["status"] == "done"
         assert lines[1]["index"] == 2
 
+    def test_only_the_last_payload_in_the_whole_batch_has_more_false(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Three sessions, each producing one payload. Only the very last
+        # payload overall (C's) should carry has_more=False -- every other
+        # payload must be True so pam-agent-api stages without triggering a
+        # pipeline run, and exactly one trigger fires after the batch.
+        a_path = tmp_path / "a.jsonl"
+        _write_transcript(a_path, [_user_line("s-a", "first")])
+        b_path = tmp_path / "b.jsonl"
+        _write_transcript(b_path, [_user_line("s-b", "second")])
+        c_path = tmp_path / "c.jsonl"
+        _write_transcript(c_path, [_user_line("s-c", "third")])
+
+        seen_has_more: list[tuple[str, bool]] = []
+
+        def fake_ingest(payload: dict) -> dict:
+            seen_has_more.append((payload["session_id"], payload["has_more"]))
+            return {"status": "queued", "item_id": "x"}
+
+        monkeypatch.setattr(sync_batch, "ingest_memory_from_chat", fake_ingest)
+
+        sessions = [
+            {"file": str(a_path), "client": "claude_code"},
+            {"file": str(b_path), "client": "claude_code"},
+            {"file": str(c_path), "client": "claude_code"},
+        ]
+
+        run_batch(sessions)
+
+        assert seen_has_more == [("s-a", True), ("s-b", True), ("s-c", False)]
+
+    def test_multi_part_session_only_final_part_has_more_false(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A single session split into multiple parts (large transcript) --
+        # every part but the session's own last part must be True, and since
+        # it's also the last session in the batch, that final part is the
+        # one payload with has_more=False.
+        monkeypatch.setattr(sync_batch, "build_payloads", lambda parsed, *, client: [
+            {"session_id": parsed["session_id"], "turns": [], "part_index": 0, "part_count": 3},
+            {"session_id": parsed["session_id"], "turns": [], "part_index": 1, "part_count": 3},
+            {"session_id": parsed["session_id"], "turns": [], "part_index": 2, "part_count": 3},
+        ])
+
+        path = tmp_path / "big.jsonl"
+        _write_transcript(path, [_user_line("s-big", "x")])
+
+        seen_has_more: list[bool] = []
+
+        def fake_ingest(payload: dict) -> dict:
+            seen_has_more.append(payload["has_more"])
+            return {"status": "queued", "item_id": "x"}
+
+        monkeypatch.setattr(sync_batch, "ingest_memory_from_chat", fake_ingest)
+
+        run_batch([{"file": str(path), "client": "claude_code"}])
+
+        assert seen_has_more == [True, True, False]
+
+    def test_last_payload_has_more_false_even_when_final_session_is_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # If the batch's last *session* is mechanically skipped (no turns),
+        # the true last payload belongs to an earlier session -- has_more
+        # must still land on that one, not silently vanish.
+        good_path = tmp_path / "good.jsonl"
+        _write_transcript(good_path, [_user_line("s-good", "hello")])
+        empty_path = tmp_path / "empty.jsonl"
+        _write_transcript(empty_path, [{"type": "mode", "mode": "normal", "sessionId": "s-empty"}])
+
+        seen_has_more: list[bool] = []
+
+        def fake_ingest(payload: dict) -> dict:
+            seen_has_more.append(payload["has_more"])
+            return {"status": "queued", "item_id": "x"}
+
+        monkeypatch.setattr(sync_batch, "ingest_memory_from_chat", fake_ingest)
+
+        sessions = [
+            {"file": str(good_path), "client": "claude_code"},
+            {"file": str(empty_path), "client": "claude_code"},
+        ]
+
+        run_batch(sessions)
+
+        assert seen_has_more == [False]
+
     def test_emits_flushed_progress_line_per_session_plus_summary(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
     ) -> None:

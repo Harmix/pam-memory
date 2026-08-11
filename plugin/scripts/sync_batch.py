@@ -18,6 +18,17 @@ loops over sessions in-process. It also prints one flushed JSON line per
 session as it finishes, so a caller running this via a backgrounded Bash
 call can attach the Monitor tool and relay live progress to the user instead
 of going silent for minutes.
+
+Every ingest call used to trigger its own pam-jobs pipeline run (pam-agent-api
+published a RunRequested per call, unconditionally), so a batch of N sessions
+could fire up to N separate workflow executions. Payloads now carry a
+`has_more` flag: every payload except the very last one in the whole batch is
+sent with `has_more=True` so pam-agent-api stages it without triggering a
+run; only the final payload overall is sent with `has_more=False`, firing
+exactly one pipeline run after everything has been staged. Determining which
+payload is "last" requires building every session's payloads up front (a
+first pass over all sessions) before any ingest calls go out, rather than
+streaming parse-then-ingest one session at a time as before.
 """
 
 from __future__ import annotations
@@ -48,46 +59,28 @@ def _emit(obj: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
-def run_batch(sessions: list[dict[str, Any]]) -> dict[str, int]:
-    tally = {"queued": 0, "queued_locally": 0, "skipped": 0, "errors": 0}
-    total = len(sessions)
+def _parse_all(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """First pass: parse every session and build its ingest payloads.
 
+    Done up front (rather than streamed session-by-session) so the caller
+    can find the single last payload across the *whole* batch before any
+    ingest calls happen -- that's the only one that should trigger the
+    pipeline run.
+    """
+    entries: list[dict[str, Any]] = []
     for index, session in enumerate(sessions, start=1):
         file_path = session.get("file")
         client = session.get("client", "claude_code")
         try:
             parsed = parse_transcript(Path(file_path))
             payloads = build_payloads(parsed, client=client)
-            if not payloads:
-                tally["skipped"] += 1
-                _emit(
-                    {
-                        "index": index,
-                        "total": total,
-                        "status": "skipped",
-                        "reason": "no non-empty turns",
-                        "session_id": parsed["session_id"],
-                    }
-                )
-                continue
-
-            results = [ingest_memory_from_chat(payload) for payload in payloads]
-            for r in results:
-                if r["status"] == "queued":
-                    tally["queued"] += 1
-                elif r["status"] == "queued_locally":
-                    tally["queued_locally"] += 1
-                else:
-                    tally["errors"] += 1
-
-            _emit(
+            entries.append(
                 {
                     "index": index,
-                    "total": total,
-                    "status": "done",
-                    "session_id": parsed["session_id"],
-                    "part_count": len(payloads),
-                    "results": results,
+                    "file_path": file_path,
+                    "parsed": parsed,
+                    "payloads": payloads,
+                    "error": None,
                 }
             )
         except (Exception, SystemExit) as exc:  # noqa: BLE001 - one bad session must not kill the batch
@@ -96,16 +89,82 @@ def run_batch(sessions: list[dict[str, Any]]) -> dict[str, int]:
             # missing/unreadable transcript would abort the whole batch,
             # which is strictly worse than the old one-subprocess-per-session
             # approach this script replaced.
+            entries.append(
+                {
+                    "index": index,
+                    "file_path": file_path,
+                    "parsed": None,
+                    "payloads": None,
+                    "error": str(exc),
+                }
+            )
+    return entries
+
+
+def run_batch(sessions: list[dict[str, Any]]) -> dict[str, int]:
+    tally = {"queued": 0, "queued_locally": 0, "skipped": 0, "errors": 0}
+    total = len(sessions)
+
+    entries = _parse_all(sessions)
+
+    last_payload_key: tuple[int, int] | None = None
+    for entry in entries:
+        if entry["payloads"]:
+            last_payload_key = (entry["index"], len(entry["payloads"]) - 1)
+
+    for entry in entries:
+        index = entry["index"]
+
+        if entry["error"] is not None:
             tally["errors"] += 1
             _emit(
                 {
                     "index": index,
                     "total": total,
                     "status": "error",
-                    "file": file_path,
-                    "error": str(exc),
+                    "file": entry["file_path"],
+                    "error": entry["error"],
                 }
             )
+            continue
+
+        parsed = entry["parsed"]
+        payloads = entry["payloads"]
+        if not payloads:
+            tally["skipped"] += 1
+            _emit(
+                {
+                    "index": index,
+                    "total": total,
+                    "status": "skipped",
+                    "reason": "no non-empty turns",
+                    "session_id": parsed["session_id"],
+                }
+            )
+            continue
+
+        results = []
+        for part_index, payload in enumerate(payloads):
+            payload["has_more"] = (index, part_index) != last_payload_key
+            results.append(ingest_memory_from_chat(payload))
+        for r in results:
+            if r["status"] == "queued":
+                tally["queued"] += 1
+            elif r["status"] == "queued_locally":
+                tally["queued_locally"] += 1
+            else:
+                tally["errors"] += 1
+
+        _emit(
+            {
+                "index": index,
+                "total": total,
+                "status": "done",
+                "session_id": parsed["session_id"],
+                "part_count": len(payloads),
+                "results": results,
+            }
+        )
 
     _emit({"status": "summary", "total": total, **tally})
     return tally

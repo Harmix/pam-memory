@@ -43,6 +43,7 @@ ITEM_FIELDS = (
     "title",
     "part_index",
     "part_count",
+    "has_more",
 )
 
 

@@ -2,7 +2,7 @@
 name: sync-claude-memory
 description: Reads the user's local Claude Code and Claude Desktop Cowork session transcripts, mechanically parses and redacts each into raw turns, and sends them to PAM for server-side extraction. Always discloses which local files it will read and asks for explicit confirmation before reading any transcript content. Triggers on "/sync-claude-memory", "sync my claude memory into pam", "import my claude chat history".
 argument-hint: [--since YYYY-MM-DD] [--project <name>]
-allowed-tools: Bash, AskUserQuestion
+allowed-tools: Bash, AskUserQuestion, Monitor
 ---
 
 # sync-claude-memory
@@ -19,14 +19,14 @@ first**, then read transcript content only for what was confirmed. Never read
 transcript message content before the user has confirmed.
 
 **No LLM judgment happens client-side.** Step 3 below runs a purely
-mechanical script (`extract_raw_transcript.py`) — no `Agent` subagents, no
-model calls of any kind — to parse each transcript into raw `{role, text,
-timestamp}` turns and apply regex-based secret redaction, then pushes those
-turns to PAM via `ingest_memory_from_chat.py`. Deciding what's durable,
-summarizing, and extracting facts all happen server-side in PAM's pam-jobs
-pipeline (the same Gemini extract+validate pass every other memory source
-goes through) — this command never spends the user's own model quota on
-PAM's ingest work.
+mechanical script (`sync_batch.py`, which drives the same parsing logic as
+`extract_raw_transcript.py`) — no `Agent` subagents, no model calls of any
+kind — to parse each transcript into raw `{role, text, timestamp}` turns and
+apply regex-based secret redaction, then pushes those turns to PAM via
+`ingest_memory_from_chat.py`. Deciding what's durable, summarizing, and
+extracting facts all happen server-side in PAM's pam-jobs pipeline (the same
+Gemini extract+validate pass every other memory source goes through) — this
+command never spends the user's own model quota on PAM's ingest work.
 
 If that push fails for any reason (no key configured, network error, PAM
 rejects it) `ingest_memory_from_chat.py` automatically falls back to queuing
@@ -86,47 +86,67 @@ by — date or project — and re-run step 1), or cancel. If the user cancels,
 stop here. Do not read any transcript file content beyond what step 1 already
 read.
 
-## 3. Parse and push — mechanical, no subagents
+## 3. Parse and push — mechanical, no subagents, with live progress
 
-Only after confirmation. For every confirmed session, run:
+Only after confirmation. Write the confirmed sessions to a scratch JSON file
+as an array of `{"file": ..., "client": ...}` objects, taken directly from
+step 1's `sessions` list (e.g. to a path under the session's scratchpad
+directory), then run the whole batch as **one** process:
 
 ```
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/extract_raw_transcript.py" --file <path> --client <client>
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sync_batch.py" --sessions-file <scratch-file>.json
 ```
 
-using the `"file"` and `"client"` values from that session's entry in step
-1's `sessions` list. This is a single Python process per session with zero
-model calls — do not spawn an `Agent` for this, and do not read transcript
-content yourself. Batch the calls into one Bash invocation (a shell loop
-over the confirmed sessions) rather than one tool call per session, to keep
-round-trips down for large scopes.
+`sync_batch.py` imports the same parsing/redaction/ingest logic as
+`extract_raw_transcript.py` and loops over every session in-process — no
+subagents, no model calls, and no repeated `python3` startup per session. It
+prints one flushed JSON line per session as it finishes, then a final
+`{"status": "summary", "total": N, "queued": ..., "queued_locally": ...,
+"skipped": ..., "errors": ...}` line.
 
-The user's default shell may be bash or zsh (check the environment info you
-were given). Bash-only array syntax (`declare -a`, `"${!FILES[@]}"`) is
-**not** portable to zsh — under zsh it fails silently (arrays end up empty,
-the loop body never runs, and `wc -l` reports 0) rather than erroring, which
-looks like success while actually syncing nothing. Use a heredoc fed into a
-`while read` loop instead — this works identically in bash and zsh:
+**Do not reimplement this as a multi-line shell loop** (e.g.
+`while read ... done <<EOF` calling a script once per session) run via a
+backgrounded Bash call. That exact pattern was observed to hang indefinitely
+before ever starting the first session — no output, no error, `ps` showing
+no child process — most likely because of how the harness wires stdin for
+backgrounded multi-line shell compound statements, not a bug in the parsing
+logic itself (the identical per-session work completes in ~1s when invoked
+directly). `sync_batch.py` exists so the call site is always a single simple
+command, which does not hit this.
 
-```bash
-while IFS='|' read -r f c; do
-  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/extract_raw_transcript.py" \
-    --file "$f" --client "$c"
-done <<'EOF'
-<file1>|<client1>
-<file2>|<client2>
-EOF
+For scopes worth showing live progress on (roughly more than 10-15
+sessions), invoke it with the `Monitor` tool directly rather than plain
+Bash — `Monitor`'s `command` starts the process itself and turns each
+stdout line into a notification, so you can relay per-session progress to
+the user as it happens instead of going silent for minutes:
+
+```
+Monitor(
+  command: python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sync_batch.py" --sessions-file <scratch-file>.json,
+  description: "sync-claude-memory: pushing <N> sessions to PAM",
+  timeout_ms: <a few minutes per ~50 sessions, capped at 3600000>,
+  persistent: false
+)
 ```
 
-Each line of output is one JSON object:
+Relay progress in your own words as notifications arrive (e.g. "34 of 117
+sessions pushed so far, 2 fell back to the local queue") rather than
+printing raw JSON at the user. For small scopes, plain foreground Bash
+(no `Monitor`) is simpler and fine — parse the JSON lines directly from its
+output.
 
-- `{"status": "skipped", "reason": "no non-empty turns", "session_id": ...}`
+Each per-session line is one JSON object:
+
+- `{"index": i, "total": N, "status": "skipped", "reason": "no non-empty turns", "session_id": ...}`
   — mechanical skip, not a durability judgment (e.g. a session with only
   tool calls and no prose).
-- `{"status": "done", "session_id": ..., "part_count": N, "results": [...]}`
+- `{"index": i, "total": N, "status": "done", "session_id": ..., "part_count": N, "results": [...]}`
   — one `ingest_memory_from_chat.py` result per part; each part's own
   `"status"` is `"queued"` (reached PAM) or `"queued_locally"` (fallback,
   check `"reason"`).
+- `{"index": i, "total": N, "status": "error", "file": ..., "error": ...}`
+  — that one session failed to parse or ingest; the batch continues with
+  the rest.
 
 Large sessions are split into multiple parts automatically (same
 `session_id`, ordered `part_index`) — PAM merges parts by `session_id`
@@ -135,11 +155,12 @@ part's status.
 
 ## 4. Report results
 
-Tally the JSON lines from step 3 — don't re-read transcripts to re-derive
-counts, the script output already has everything. Sum: total sessions
-processed, how many were sent to PAM (`"queued"`), how many fell back to the
-local queue (`"queued_locally"`), and how many were mechanically skipped (no
-text content).
+Use the `{"status": "summary", ...}` line `sync_batch.py` prints at the end
+— don't re-read transcripts or re-derive counts by hand, the script's own
+tally already has everything: total sessions, how many were sent to PAM
+(`"queued"`), how many fell back to the local queue (`"queued_locally"`),
+how many were mechanically skipped (no text content), and how many hit an
+unexpected error (`"errors"`).
 
 If any items fell back locally, also run this so you can tell the user
 exactly where they landed:

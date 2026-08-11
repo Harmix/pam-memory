@@ -32,19 +32,18 @@ import pam_plugin_config
 
 QUEUE_DIR = Path.home() / ".pam" / "sync_queue"
 QUEUE_FILE = QUEUE_DIR / "claude_code.jsonl"
-REQUIRED_FIELDS = ("session_id", "summary")
+REQUIRED_FIELDS = ("session_id", "turns")
 ITEM_FIELDS = (
     "session_id",
-    "summary",
+    "turns",
     "source",
     "client",
     "project_path",
     "started_at",
     "ended_at",
     "title",
-    "facts",
-    "topics",
-    "confidence",
+    "part_index",
+    "part_count",
 )
 
 

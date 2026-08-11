@@ -39,20 +39,38 @@ class RetrieveMemoryResponse(BaseModel):
         )
 
 
+class IngestMemoryTurn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["user", "assistant"]
+    text: str
+    timestamp: str | None = None
+
+
 class IngestMemoryItem(BaseModel):
+    """Raw transcript turns pushed to PAM for server-side extraction.
+
+    Turns are mechanically parsed and secret-redacted client-side only -- no
+    client-side LLM summarization. PAM's pam-jobs pipeline runs the actual
+    Gemini extract+validate pass server-side, so ingesting never spends the
+    caller's own model quota.
+
+    Large sessions may be split into ordered parts (same session_id,
+    incrementing part_index/part_count) across multiple ingest() calls.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     session_id: str
-    summary: str
+    turns: list[IngestMemoryTurn]
     source: str = "claude_code"
     client: str | None = None
     project_path: str | None = None
     started_at: str | None = None
     ended_at: str | None = None
     title: str | None = None
-    facts: list[str] = Field(default_factory=list)
-    topics: list[str] = Field(default_factory=list)
-    confidence: Literal["high", "medium", "low"] | None = None
+    part_index: int = 0
+    part_count: int = 1
 
 
 class IngestMemoryResponse(BaseModel):

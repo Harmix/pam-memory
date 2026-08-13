@@ -1,11 +1,16 @@
-"""Memory resource — client.memory.retrieve(...)."""
+"""Memory resource — client.memory.retrieve(...) and client.memory.ingest(...)."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pam._constants import RETRIEVE_PATH
-from pam.types.memory import RetrieveMemoryRequest, RetrieveMemoryResponse
+from pam._constants import INGEST_PATH, RETRIEVE_PATH
+from pam.types.memory import (
+    IngestMemoryItem,
+    IngestMemoryResponse,
+    RetrieveMemoryRequest,
+    RetrieveMemoryResponse,
+)
 
 if TYPE_CHECKING:
     from pam._client import _HTTPClient
@@ -27,3 +32,10 @@ class MemoryResource:
             body.model_dump(exclude_none=True),
         )
         return RetrieveMemoryResponse.model_validate(data)
+
+    def ingest(self, *, item: IngestMemoryItem) -> IngestMemoryResponse:
+        data = self._http.post_json(
+            INGEST_PATH,
+            item.model_dump(exclude_none=True),
+        )
+        return IngestMemoryResponse.model_validate(data)

@@ -2,7 +2,12 @@
 
 from pam._client import PAMClient
 from pam.exceptions import PAMAPIError, PAMAuthError, PAMError, PAMTimeoutError
-from pam.types.memory import RetrieveMemoryResponse
+from pam.types.memory import (
+    IngestMemoryItem,
+    IngestMemoryResponse,
+    IngestMemoryTurn,
+    RetrieveMemoryResponse,
+)
 
 __all__ = [
     "PAMClient",
@@ -11,6 +16,9 @@ __all__ = [
     "PAMTimeoutError",
     "PAMAPIError",
     "RetrieveMemoryResponse",
+    "IngestMemoryItem",
+    "IngestMemoryTurn",
+    "IngestMemoryResponse",
 ]
 
 __version__ = "0.1.0"

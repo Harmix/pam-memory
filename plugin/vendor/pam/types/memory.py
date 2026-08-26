@@ -22,6 +22,8 @@ class RetrieveMemoryResponse(BaseModel):
     request_id: str | None = None
     error_code: str | None = None
     error_message: str | None = None
+    degraded: bool = False
+    degraded_reason: str | None = None
     raw: dict[str, Any] | None = None
 
     @property

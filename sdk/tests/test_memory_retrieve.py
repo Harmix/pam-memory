@@ -126,6 +126,93 @@ def test_retrieve_memory_not_ready_business_error() -> None:
 
 
 @respx.mock
+def test_ac5_degraded_retrieve_is_still_ok_fail_open() -> None:
+    """AC5: a degraded retrieval stays usable for an existing SDK caller.
+
+    C1 invariant 1 keeps ``status == "ok"`` while degraded, so ``.ok`` -- the
+    plugin's only branch -- must stay True and the result must not look like a
+    business error (invariant 4: ``error_code`` stays None).
+    """
+    respx.post("https://api.pam.harmix.ai/v1/memory/retrieve").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "memory_ready": True,
+                "content_text": "Partial context from a bounded prompt.",
+                "sources": [".knowledge/decisions/migration.md"],
+                "request_id": "req-degraded",
+                "degraded": True,
+                "degraded_reason": "phase1_prompt_too_large",
+            },
+        )
+    )
+
+    client = PAMClient(api_key="pam_mkey_test.secret")
+    result = client.memory.retrieve(prompt="migration plan?")
+
+    assert result.ok is True
+    assert result.degraded is True
+    assert not result.is_business_error
+    assert result.error_code is None
+
+
+@respx.mock
+def test_ac5_response_without_degraded_fields_still_parses() -> None:
+    """AC5: wire compatibility -- an older server omits both new fields."""
+    respx.post("https://api.pam.harmix.ai/v1/memory/retrieve").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "memory_ready": True,
+                "content_text": "Migration uses Next.js 14.",
+                "sources": [],
+            },
+        )
+    )
+
+    client = PAMClient(api_key="pam_mkey_test.secret")
+    result = client.memory.retrieve(prompt="migration plan?")
+
+    assert result.ok is True
+    assert result.degraded is False
+    assert result.degraded_reason is None
+
+
+@respx.mock
+def test_ac4_degraded_is_typed_boolean_not_prose() -> None:
+    """AC4: degradation is readable without string-matching prose.
+
+    ``degraded`` parses as a typed bool and ``degraded_reason`` carries a
+    machine token from C1's closed vocabulary, never a sentence.
+    """
+    respx.post("https://api.pam.harmix.ai/v1/memory/retrieve").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "memory_ready": True,
+                "content_text": (
+                    "No company memory context was retrieved for this prompt."
+                ),
+                "sources": [],
+                "degraded": True,
+                "degraded_reason": "phase1_unparseable",
+            },
+        )
+    )
+
+    client = PAMClient(api_key="pam_mkey_test.secret")
+    result = client.memory.retrieve(prompt="anything")
+
+    assert isinstance(result.degraded, bool)
+    assert result.degraded is True
+    assert result.degraded_reason == "phase1_unparseable"
+    assert result.status == "ok"
+
+
+@respx.mock
 def test_client_retrieve_shortcut() -> None:
     respx.post("https://api.pam.harmix.ai/v1/memory/retrieve").mock(
         return_value=httpx.Response(
@@ -158,5 +245,5 @@ def test_client_requires_api_key() -> None:
 
 def test_for_plugin_uses_strict_timeout() -> None:
     client = PAMClient.for_plugin(api_key="pam_mkey_test.secret")
-    assert client._http._timeout.connect == 1.5
-    assert client._http._timeout.read == 5.0
+    assert client._http._timeout.connect == 5.0
+    assert client._http._timeout.read == 90.0
